@@ -1,11 +1,11 @@
 use std::{
     error::Error,
-    fs::{self, File},
-    path::{Path, PathBuf},
+    fs::{self},
+    path::PathBuf,
     process::Command,
 };
 
-use clap::{builder::styling::Style, Parser};
+use clap::Parser;
 use notify::{Config, RecommendedWatcher, RecursiveMode, Watcher};
 use similar::{ChangeTag, DiffableStr, TextDiff};
 
@@ -14,6 +14,9 @@ use similar::{ChangeTag, DiffableStr, TextDiff};
 pub struct Args {
     #[clap(short, long, required = true)]
     pub file: PathBuf,
+
+    #[clap(short, long)]
+    pub clear: bool,
 }
 
 fn main() {
@@ -37,17 +40,20 @@ fn watch(path: &PathBuf) -> Result<(), Box<dyn Error>> {
     // below will be monitored for changes.
     watcher.watch(path.as_ref(), RecursiveMode::NonRecursive)?;
 
-    for res in rx {
+    while let Ok(res) = rx.try_recv() {
         match res {
             Ok(event) => match event.kind {
                 notify::EventKind::Modify(event) => {
                     match event {
                         notify::event::ModifyKind::Data(_) => {
+                            let prev = versions.last().unwrap().clone();
                             let contents = fs::read_to_string(path)?;
-                            versions.push(contents);
-                            let len = versions.len();
-                            // print_diff(&versions[len - 2], &versions[len - 1]);
-                            print_diff_delta(&versions[len - 2], &versions[len - 1]);
+                            if prev != contents {
+                                versions.push(contents);
+                                let len = versions.len();
+                                // print_diff(&versions[len - 2], &versions[len - 1]);
+                                print_diff_delta(&versions[len - 2], &versions[len - 1], false);
+                            }
                         }
                         _ => {}
                     }
@@ -82,14 +88,18 @@ fn print_diff(old: &str, new: &str) {
     }
 }
 
-fn print_diff_delta(old: &str, new: &str) {
+fn print_diff_delta(old: &str, new: &str, clear: bool) {
     let old_file = tempfile::NamedTempFile::new().unwrap();
     let new_file = tempfile::NamedTempFile::new().unwrap();
     let _ = std::fs::write(old_file.path(), old);
     let _ = std::fs::write(new_file.path(), new);
 
     // clear screen
-    print!("\x1B[2J\x1B[1;1H");
+    if clear {
+        print!("\x1B[2J\x1B[1;1H");
+    } else {
+        println!("----------------------------------------------------------------");
+    }
 
     let output = Command::new("delta")
         .arg(old_file.path().to_string_lossy().as_str().unwrap())
